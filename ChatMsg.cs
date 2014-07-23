@@ -9,8 +9,8 @@ public class ChatMsg
 {
 
     [ProtoMember(1)]
-    public string sender;//发送者
+    public string sender { get; set; }//发送者
     [ProtoMember(2)]
-    public string msg;//消息
+    public string msg { get; set; }//消息
 
 }
