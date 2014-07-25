@@ -13,6 +13,13 @@ namespace TCPServer
     {
         static void Main(string[] args)
         {
+            Server server = new Server(100, 1024);
+            server.Init();
+            server.Start(new IPEndPoint(IPAddress.Any, 12580));
+        }
+        /*
+        static void Main(string[] args)
+        {
             //在本机创建一个TcpListener，
             TcpListener listener = new TcpListener(IPAddress.Any, 12580);
             //开始监听，
@@ -28,7 +35,7 @@ namespace TCPServer
                 thr.Start(client);
             }
         }
-
+        */
         static void RecMsg(object client)
         {
             TcpClient sokClient = client as TcpClient;
