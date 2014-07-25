@@ -11,12 +11,14 @@ namespace TCPServer
 {
     class Program
     {
+
         static void Main(string[] args)
         {
             Server server = new Server(100, 1024);
             server.Init();
             server.Start(new IPEndPoint(IPAddress.Any, 12580));
         }
+
         /*
         static void Main(string[] args)
         {
@@ -35,7 +37,8 @@ namespace TCPServer
                 thr.Start(client);
             }
         }
-        */
+        
+
         static void RecMsg(object client)
         {
             TcpClient sokClient = client as TcpClient;
@@ -90,9 +93,11 @@ namespace TCPServer
         static void onRecMsg(MemoryStream kStream)
         {
             ChatMsg msg = Serializer.Deserialize<ChatMsg>(kStream);
+            kStream.Dispose();
             System.Console.WriteLine(msg.sender);
             System.Console.WriteLine(msg.msg);
             //System.Console.ReadLine();
         }
+        */
     }
 }

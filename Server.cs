@@ -10,11 +10,11 @@
 *********************************************************************************/
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
-using System.Diagnostics;
 
 namespace TCPServer
 {
@@ -26,9 +26,10 @@ namespace TCPServer
         const int opsToPreAlloc = 2;    // read, write (don't alloc buffer space for accepts)
         Socket listenSocket;            // the socket used to listen for incoming connection requests
         // pool of reusable SocketAsyncEventArgs objects for write, read and accept socket operations
-        SocketAsyncEventArgsPool m_readWritePool;
-        int m_totalBytesRead;           // counter of the total # bytes received by the server
-        int m_numConnectedSockets;      // the total number of clients connected to the server 
+        SocketAsyncEventArgsPool m_readPool;
+        SocketAsyncEventArgsPool m_writePool;
+        public static int m_totalBytesRead;           // counter of the total # bytes received by the server
+        public static int m_numConnectedSockets;      // the total number of clients connected to the server 
         Semaphore m_maxNumberAcceptedClients;
 
         // Create an uninitialized server instance.  
@@ -48,7 +49,8 @@ namespace TCPServer
             m_bufferManager = new BufferManager(receiveBufferSize * numConnections * opsToPreAlloc,
                 receiveBufferSize);
 
-            m_readWritePool = new SocketAsyncEventArgsPool(numConnections);
+            m_readPool = new SocketAsyncEventArgsPool(numConnections);
+            m_writePool = new SocketAsyncEventArgsPool(numConnections);
             m_maxNumberAcceptedClients = new Semaphore(numConnections, numConnections);
         }
 
@@ -59,28 +61,46 @@ namespace TCPServer
         //
         public void Init()
         {
-            // Allocates one large byte buffer which all I/O operations use a piece of.  This gaurds 
+            // Allocates one large byte buffer which all I/O operations use a piece of.  This gaurds  
             // against memory fragmentation
             m_bufferManager.InitBuffer();
 
             // preallocate pool of SocketAsyncEventArgs objects
             SocketAsyncEventArgs readWriteEventArg;
-
+            SocketAsyncEventArgs writeEventArg;
+            AsyncUserToken userToken;
             for (int i = 0; i < m_numConnections; i++)
             {
+                userToken = new AsyncUserToken();
+                userToken.Init();
                 //Pre-allocate a set of reusable SocketAsyncEventArgs
                 readWriteEventArg = new SocketAsyncEventArgs();
-                readWriteEventArg.Completed += new EventHandler<SocketAsyncEventArgs>(IO_Completed);
-                readWriteEventArg.UserToken = new AsyncUserToken();
 
+                //for receive
+
+                readWriteEventArg.Completed += new EventHandler<SocketAsyncEventArgs>(IO_Completed);
+                readWriteEventArg.UserToken = userToken;
                 // assign a byte buffer from the buffer pool to the SocketAsyncEventArg object
                 m_bufferManager.SetBuffer(readWriteEventArg);
+                // add SocketAsyncEventArg to the pool
+                m_readPool.Push(readWriteEventArg);
+
+
+                //for send
+
+                writeEventArg = new SocketAsyncEventArgs();
+                writeEventArg.Completed += new EventHandler<SocketAsyncEventArgs>(IO_Completed);
+                writeEventArg.UserToken = userToken;
+                // assign a byte buffer from the buffer pool to the SocketAsyncEventArg object
+                m_bufferManager.SetBuffer(writeEventArg);
 
                 // add SocketAsyncEventArg to the pool
-                m_readWritePool.Push(readWriteEventArg);
+                m_writePool.Push(writeEventArg);
+
             }
 
         }
+
 
         // Starts the server such that it is listening for 
         // incoming connection requests.    
@@ -143,28 +163,34 @@ namespace TCPServer
             Console.WriteLine("Client connection accepted. There are {0} clients connected to the server",
                 m_numConnectedSockets);
 
-            // Get the socket for the accepted client connection and put it into the 
-            //ReadEventArg object user token
-            SocketAsyncEventArgs readEventArgs = m_readWritePool.Pop();
-            ((AsyncUserToken)readEventArgs.UserToken).Socket = e.AcceptSocket;
+            // Get the socket for the accepted client connection and put it into the  
 
-            // As soon as the client is connected, post a receive to the connection
-            bool willRaiseEvent = e.AcceptSocket.ReceiveAsync(readEventArgs);
+            SocketAsyncEventArgs readEventArgs = m_readPool.Pop();
+            SocketAsyncEventArgs writeEventArgs = m_writePool.Pop();
+            AsyncUserToken token = (AsyncUserToken)readEventArgs.UserToken;
+            token.m_kSocket = e.AcceptSocket;
+            token.m_kReceiveEventArgs = readEventArgs;
+            token.m_kSendEventArgs = writeEventArgs;
+            token.m_bIsConnect = true;
+            // As soon as the client is connected, post a receive to the connection 
+            bool willRaiseEvent = token.m_kSocket.ReceiveAsync(token.m_kReceiveEventArgs);
             if (!willRaiseEvent)
             {
-                ProcessReceive(readEventArgs);
+                ProcessReceive(token.m_kReceiveEventArgs);
             }
+
 
             // Accept the next connection request
             StartAccept(e);
         }
+
 
         // This method is called whenever a receive or send operation is completed on a socket 
         //
         // <param name="e">SocketAsyncEventArg associated with the completed receive operation</param>
         void IO_Completed(object sender, SocketAsyncEventArgs e)
         {
-            Thread.Sleep(5000);
+            //Thread.Sleep(500);
             // determine which type of operation just completed and call the associated handler
             switch (e.LastOperation)
             {
@@ -187,23 +213,30 @@ namespace TCPServer
         private void ProcessReceive(SocketAsyncEventArgs e)
         {
             // check if the remote host closed the connection
-            AsyncUserToken token = (AsyncUserToken)e.UserToken;
+
             if (e.BytesTransferred > 0 && e.SocketError == SocketError.Success)
             {
+                AsyncUserToken token = (AsyncUserToken)e.UserToken;
+                token.ReceiveData(e);
                 //increment the count of the total bytes receive by the server
                 Interlocked.Add(ref m_totalBytesRead, e.BytesTransferred);
-                Console.WriteLine("threadid: {0}, client ip: {1}, totle theadnum: {2}",
+                Console.WriteLine("threadid: {0}, client ip: {1}, totle threadnum: {2}",
                     Thread.CurrentThread.ManagedThreadId,
-                    token.Socket.RemoteEndPoint,
+                    token.m_kSocket.RemoteEndPoint,
                     Process.GetCurrentProcess().Threads.Count);
                 Console.WriteLine("The server has read a total of {0} bytes", m_totalBytesRead);
                 string response = "yo! ";
                 Byte[] sendBuffer = Encoding.UTF8.GetBytes(response);
-                e.SetBuffer(sendBuffer, 0, sendBuffer.Length);
-                bool willRaiseEvent = token.Socket.SendAsync(e);
+                //e.SetBuffer(sendBuffer, 0, sendBuffer.Length);
+                //e.SetBuffer(e.Offset, 5);
+                if (token.m_kSocket.Available == 0)
+                {
+                    token.ProcessData();
+                }
+                bool willRaiseEvent = token.m_kSocket.ReceiveAsync(e);
                 if (!willRaiseEvent)
                 {
-                    ProcessSend(e);
+                    ProcessReceive(e);
                 }
 
             }
@@ -226,11 +259,11 @@ namespace TCPServer
                 // done echoing data back to the client
                 AsyncUserToken token = (AsyncUserToken)e.UserToken;
                 // read the next block of data send from the client
-                bool willRaiseEvent = token.Socket.ReceiveAsync(e);
-                if (!willRaiseEvent)
-                {
-                    ProcessReceive(e);
-                }
+                //bool willRaiseEvent = token.m_kSocket.ReceiveAsync(e);
+                //if (!willRaiseEvent)
+                //{
+               //     ProcessReceive(e);
+               // }
             }
             else
             {
@@ -245,11 +278,11 @@ namespace TCPServer
             // close the socket associated with the client
             try
             {
-                token.Socket.Shutdown(SocketShutdown.Send);
+                token.m_kSocket.Shutdown(SocketShutdown.Send);
             }
             // throws if client process has already closed
             catch (Exception) { }
-            token.Socket.Close();
+            token.m_kSocket.Close();
 
             // decrement the counter keeping track of the total number of clients connected to the server
             Interlocked.Decrement(ref m_numConnectedSockets);
@@ -257,7 +290,9 @@ namespace TCPServer
             Console.WriteLine("A client has been disconnected from the server. There are {0} clients connected to the server", m_numConnectedSockets);
 
             // Free the SocketAsyncEventArg so they can be reused by another client
-            m_readWritePool.Push(e);
+            m_readPool.Push(token.m_kReceiveEventArgs);
+            m_writePool.Push(token.m_kSendEventArgs);
+            token.Reset();
         }
 
     }
