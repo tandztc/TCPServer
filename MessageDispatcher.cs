@@ -20,7 +20,7 @@ namespace TCPServer
             if (0 == eType)
             {
                 ChatMsg msg = Serializer.Deserialize<ChatMsg>(kStream);
-                kStream.Dispose();
+                //kStream.Dispose();
                 System.Console.WriteLine(msg.sender);
                 System.Console.WriteLine(msg.msg);
                 string resp = Server.m_totalBytesRead.ToString();

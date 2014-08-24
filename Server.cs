@@ -15,11 +15,15 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Data.Common;
+
 
 namespace TCPServer
 {
     class Server
     {
+        private DbProviderFactory fact;
+
         private int m_numConnections;   // the maximum number of connections the sample is designed to handle simultaneously 
         private int m_receiveBufferSize;// buffer size to use for each socket I/O operation 
         BufferManager m_bufferManager;  // represents a large reusable set of buffers for all socket operations
@@ -98,6 +102,7 @@ namespace TCPServer
                 m_writePool.Push(writeEventArg);
 
             }
+
 
         }
 
